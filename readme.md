@@ -1,5 +1,7 @@
 気象庁の週間天気情報をM5Stackに表示します。  
 
+![サンプル](sample.jpg "サンプル")
+
 # ハードウェア
 M5Stack Core
 
