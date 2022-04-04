@@ -27,7 +27,8 @@ static const uint8_t days7 = 1;  // 7日予報のインデックス
 typedef enum {
   kDisplayDate_Today = 0,
   kDisplayDate_Tomorrow,
-  kDisplayDate_DayAfterTomorrow
+  kDisplayDate_DayAfterTomorrow,
+  kDisplayDate_Map
 } kDisplayDate;
 
 // ----------------------------------------------------------
@@ -65,6 +66,7 @@ void loop() {
   if (M5.BtnA.wasPressed()) {
     if (nowDisplay == kDisplayDate_Today) {
       // 気象庁の天気予報画像を表示
+      nowDisplay = kDisplayDate_Map;
       DynamicJsonDocument pictureInfo = getJson(endpoint_weatherImg);
       String url = "https://www.jma.go.jp/bosai/weather_map/data/png/" + pictureInfo["near"]["ft24"][0].as<String>();
       load_png(url, 0.6);
@@ -94,7 +96,7 @@ void loop() {
   }
 
   // 画面の再描画フラグが立っている場合、再描画する
-  if (need_redraw) {
+  if (need_redraw && nowDisplay < kDisplayDate_Map) {
     drawWeather(weatherInfo, (uint32_t)nowDisplay);
   }
 
