@@ -63,29 +63,28 @@ void loop() {
   // ボタンに合わせて天気の表示日を変える
   bool need_redraw = false;
   M5.update();
-  if (M5.BtnA.wasPressed()) {
-    if (nowDisplay == kDisplayDate_Today) {
-      // 気象庁の天気予報画像を表示
-      nowDisplay = kDisplayDate_Map;
-      DynamicJsonDocument pictureInfo = getJson(endpoint_weatherImg);
-      String url = "https://www.jma.go.jp/bosai/weather_map/data/png/" + pictureInfo["near"]["ft24"][0].as<String>();
-      load_png(url, 0.6);
-      stop_co2_update = true;
-    } else {
-      nowDisplay = kDisplayDate_Today;
-      need_redraw = true;
-      stop_co2_update = false;
-    }
+  if (M5.BtnA.read()) {
+    nowDisplay = kDisplayDate_Today;
+    need_redraw = true;
+    stop_co2_update = false;
   }
-  if (M5.BtnB.wasPressed()) {
+  if (M5.BtnB.read()) {
     nowDisplay = kDisplayDate_Tomorrow;
     need_redraw = true;
     stop_co2_update = false;
   }
-  if (M5.BtnC.wasPressed()) {
+  if (M5.BtnC.read()) {
     nowDisplay = kDisplayDate_DayAfterTomorrow;
     need_redraw = true;
     stop_co2_update = false;
+  }
+  if (M5.BtnA.pressedFor(1000)) {
+    // 気象庁の天気予報画像を表示
+    nowDisplay = kDisplayDate_Map;
+    DynamicJsonDocument pictureInfo = getJson(endpoint_weatherImg);
+    String url = "https://www.jma.go.jp/bosai/weather_map/data/png/" + pictureInfo["near"]["ft24"][0].as<String>();
+    load_png(url, 0.6);
+    stop_co2_update = true;
   }
 
   // 開始直後または1時間に1度、天気情報を更新する
@@ -133,25 +132,20 @@ DynamicJsonDocument getJson(const char *url) {
 void drawWeather(DynamicJsonDocument jsonDoc, uint32_t day_index) {
   if (jsonDoc == NULL) return;
 
-  uint8_t areaIndex_3days = getAreaIndex(days3, 0, region_3days);            // 3日天気用のarea index
-  uint8_t areaIndex_3days_city = getAreaIndex(days3, 2, region_3days_city);  // 3日天気（詳細地域）用のarea index
-  uint8_t areaIndex_7days = getAreaIndex(days7, 0, region_7days);            // 7日間天気用のarea index
-  uint8_t areaIndex_7days_city = getAreaIndex(days7, 1, region_7days_city);
-
   M5.Lcd.clear();
-  drawBackLine();               // 区切り線の描画
-  drawDataDays(jsonDoc);        // データ取得日の描画
-  drawSelectedDays(jsonDoc);    // 選択されたデータの日付の描画（3日予報の日付を使用）
-  drawWeatherForcast(jsonDoc);  // 天気予報の描画（3日予報）
-  drawRainPred(jsonDoc);        // 降水確率の描画（3日予報+7日予報）
-  drawTemp(jsonDoc);            // 最低・最高気温の描画（3日予報（地区詳細）+7日予報）
+  drawBackLine(day_index);                                 // 区切り線の描画
+  drawDataDays(jsonDoc);                                   // データ取得日の描画
+  String todayStr = drawSelectedDays(jsonDoc, day_index);  // 選択されたデータの日付の描画（3日予報の日付を使用）
+  drawWeatherForcast(jsonDoc, day_index);                  // 天気予報の描画（3日予報）
+  drawRainPred(jsonDoc, todayStr);                         // 降水確率の描画（3日予報+7日予報）
+  drawTemp(jsonDoc, todayStr);                             // 最低・最高気温の描画（3日予報（地区詳細）+7日予報）
 
   M5.Lcd.setTextSize(2);
   M5.Lcd.setTextColor(TFT_WHITE);
   M5.Lcd.drawString("`C", 250, 135);
 }
 // Areaの文字列が一致するIndexを求める
-uint8_t getAreaIndex(uint32_t days, uint32_t time_index, String region) {
+uint8_t getAreaIndex(DynamicJsonDocument jsonDoc, uint32_t days, uint32_t time_index, String region) {
   for (int i = 0; i < jsonDoc[days]["timeSeries"][time_index]["areas"].size(); i++) {
     if (jsonDoc[days]["timeSeries"][time_index]["areas"][i]["area"]["name"].as<String>() == region) {
       return i;
@@ -160,7 +154,7 @@ uint8_t getAreaIndex(uint32_t days, uint32_t time_index, String region) {
   return 0;
 }
 // 背景の区切り線の描画
-void drawBackLine(void) {
+void drawBackLine(uint32_t day_index) {
   M5.Lcd.drawLine(0, 50, 320, 50, TFT_LIGHTGREY);
   M5.Lcd.drawLine(0, 190, 320, 190, TFT_LIGHTGREY);
   M5.Lcd.drawLine(120, 130, 120, 175, TFT_LIGHTGREY);
@@ -176,17 +170,18 @@ void drawDataDays(DynamicJsonDocument jsonDoc) {
   M5.Lcd.drawString(dataTime, 0, 0);
 }
 // 選択されたデータの日付の描画（3日予報の日付を使用）
-void drawSelectedDays(DynamicJsonDocument jsonDoc) {
+String drawSelectedDays(DynamicJsonDocument jsonDoc, uint32_t day_index) {
   JsonObject dayData = jsonDoc[days3]["timeSeries"][0];
   String date_today = dayData["timeDefines"][day_index];
   String todayStr = date_today.substring(0, 10);
   M5.Lcd.setTextFont(4);
   M5.Lcd.drawString(todayStr, 5, 20);
+  return todayStr;
 }
 // 天気予報の描画（3日予報）
-void drawWeatherForcast(DynamicJsonDocument jsonDoc) {
+void drawWeatherForcast(DynamicJsonDocument jsonDoc, uint32_t day_index) {
   JsonObject weatherData = jsonDoc[days3]["timeSeries"][0];
-  String weather = weatherData["areas"][areaIndex_3days]["weathers"][day_index].as<String>();
+  String weather = weatherData["areas"][getAreaIndex(jsonDoc, days3, 0, region_3days)]["weathers"][day_index].as<String>();
   String weatherStr = "";
   if (weather.indexOf("晴") != -1) {
     weatherStr = "sunny ";
@@ -208,66 +203,66 @@ void drawWeatherForcast(DynamicJsonDocument jsonDoc) {
   M5.Lcd.drawString(weatherStr, 10, 55);
 }
 // 降水確率の描画（3日予報+7日予報）
-void drawRainPred(DynamicJsonDocument jsonDoc) {
+void drawRainPred(DynamicJsonDocument jsonDoc, String todayStr) {
   M5.Lcd.setTextSize(1);
   M5.Lcd.setTextColor(TFT_WHITE);
   M5.Lcd.drawString("%", 280, 200);
-  bool days3_data_available = false;
+
   JsonObject rainfallData = jsonDoc[days3]["timeSeries"][1];  // 3日予報の降水確率
   uint32_t rainPred_draw_cnt = 0;
+  bool data_exist = false;
   for (int i = 0; i < rainfallData["timeDefines"].size(); i++) {
     if (rainfallData["timeDefines"][i].as<String>().indexOf(todayStr) != -1) {
-      uint32_t rainPred = rainfallData["areas"][areaIndex_3days]["pops"][i].as<int>();
+      uint32_t rainPred = rainfallData["areas"][getAreaIndex(jsonDoc, days3, 0, region_3days)]["pops"][i].as<int>();
       M5.Lcd.drawString(String(rainPred), 20 + rainPred_draw_cnt * 65, 200);
       M5.Lcd.fillRect(rainPred_draw_cnt * 65, 233, 65, 7, getDrawColorFromRainPred(rainPred));
       rainPred_draw_cnt++;
-      days3_data_available = true;
+      data_exist = true;
     }
   }
+  if(data_exist)return;
   rainfallData = jsonDoc[days7]["timeSeries"][0];  // 7日予報の降水確率
-  rainPred_draw_cnt = 0;
   for (int i = 0; i < rainfallData["timeDefines"].size(); i++) {
-    if (rainfallData["timeDefines"][i].as<String>().indexOf(todayStr) != -1 && !days3_data_available) {
-      if (rainfallData["areas"][areaIndex_7days]["pops"][i] != "")  // ""なことがある
-      {
-        uint32_t rainPred = rainfallData["areas"][areaIndex_7days]["pops"][i].as<int>();
-        M5.Lcd.drawString(String(rainPred), 20 + rainPred_draw_cnt * 65, 200);
-        M5.Lcd.fillRect(rainPred_draw_cnt * 65, 233, 65, 7, getDrawColorFromRainPred(rainPred));
-        rainPred_draw_cnt++;
-      }
+    if (rainfallData["timeDefines"][i].as<String>().indexOf(todayStr) != -1) {
+      uint32_t rainPred = rainfallData["areas"][getAreaIndex(jsonDoc, days7, 0, region_7days)]["pops"][i].as<int>();
+      M5.Lcd.drawString(String(rainPred), 20, 200);
+      M5.Lcd.fillRect(0, 233, 65, 7, getDrawColorFromRainPred(rainPred));
     }
   }
 }
-// 最低・最高気温の描画（3日予報（地区詳細）+7日予報）
-void drawTemp(void) {
+// 最低・最高気温の描画（3日予報（地区詳細）+7日予報（地区詳細））
+void drawTemp(DynamicJsonDocument jsonDoc, String todayStr) {
   M5.Lcd.setTextSize(3);
-  days3_data_available = false;
   uint32_t days3_minTemperature = 999;
   uint32_t days3_maxTemperature = 0;
+  bool data_exist = false;
   JsonObject temperatureData = jsonDoc[days3]["timeSeries"][2];  // 3日予報（地区詳細）の気温
   for (int i = 0; i < temperatureData["timeDefines"].size(); i++) {
     if (temperatureData["timeDefines"][i].as<String>().indexOf(todayStr) != -1) {
-      uint32_t val = temperatureData["areas"][areaIndex_3days_city]["temps"][i];
+      uint32_t val = temperatureData["areas"][getAreaIndex(jsonDoc, days3, 2, region_3days_city)]["temps"][i];
       if (val < days3_minTemperature) days3_minTemperature = val;
       if (val > days3_maxTemperature) days3_maxTemperature = val;
-      days3_data_available = true;
+      data_exist = true;
     }
   }
-  if (days3_data_available) {
+  if(data_exist){
     M5.Lcd.setTextColor(TFT_BLUE);
     M5.Lcd.drawString(String(days3_minTemperature), 10, 120);
     M5.Lcd.setTextColor(TFT_RED);
     M5.Lcd.drawString(String(days3_maxTemperature), 137, 121);
+    return;
   }
-  temperatureData = jsonDoc[days7]["timeSeries"][1];  // 7日予報の気温
+
+  temperatureData = jsonDoc[days7]["timeSeries"][1];  // 7日予報（地区詳細）の気温
   for (int i = 0; i < temperatureData["timeDefines"].size(); i++) {
-    if (temperatureData["timeDefines"][i].as<String>().indexOf(todayStr) != -1 && !days3_data_available) {
-      String minTemperature = temperatureData["areas"][areaIndex_7days_city]["tempsMin"][i];
-      String maxTemperature = temperatureData["areas"][areaIndex_7days_city]["tempsMax"][i];
+    if (temperatureData["timeDefines"][i].as<String>().indexOf(todayStr) != -1) {
+      String minTemperature = temperatureData["areas"][getAreaIndex(jsonDoc, days7, 1, region_7days_city)]["tempsMin"][i];
+      String maxTemperature = temperatureData["areas"][getAreaIndex(jsonDoc, days7, 1, region_7days_city)]["tempsMax"][i];
       M5.Lcd.setTextColor(TFT_BLUE);
       M5.Lcd.drawString(minTemperature, 10, 120);
       M5.Lcd.setTextColor(TFT_RED);
       M5.Lcd.drawString(maxTemperature, 137, 121);
+      return;
     }
   }
 }
