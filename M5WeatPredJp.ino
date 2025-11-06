@@ -1,10 +1,10 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-#include <M5Stack.h>
+#include <M5Unified.h>
 #include <WiFi.h>
 #include <math.h>
 
-#include "pngle/pngle.h"
+static M5GFX display;
 
 // ----------------------------------------------------------
 // 各種定義（ユーザ）
@@ -21,26 +21,29 @@ static const char *region_7days_city = "父島";     // 7日天気予報のエ�
 // ----------------------------------------------------------
 // 各種定義
 // ----------------------------------------------------------
-static const char *endpoint_weatherImg = "https://www.jma.go.jp/bosai/weather_map/data/list.json";
 static const uint8_t days3 = 0;  // 3日予報のインデックス
 static const uint8_t days7 = 1;  // 7日予報のインデックス
 typedef enum {
   kDisplayDate_Today = 0,
   kDisplayDate_Tomorrow,
-  kDisplayDate_DayAfterTomorrow,
-  kDisplayDate_Map
+  kDisplayDate_DayAfterTomorrow
 } kDisplayDate;
 
 // ----------------------------------------------------------
 // 起動処理
 // ----------------------------------------------------------
 void setup() {
-  M5.begin();
-  Wire.begin();
-  dacWrite(25, 0);  // ノイズ対策
+  auto cfg = M5.config();
+  cfg.clear_display = true;  // 起動時に画面クリア
+  M5.begin(cfg);
 
-  M5.Lcd.setTextColor(TFT_WHITE);
-  M5.Lcd.setTextFont(4);
+  // ディスプレイの初期化
+  display.init();
+  display.setBrightness(128);       // 輝度を中程度に設定（0-255）
+  display.setRotation(1);           // 画面を縦向きに設定（270度回転）
+  display.setTextColor(TFT_WHITE);  // テキスト色設定
+  display.setTextFont(4);           // フォントサイズ設定
+
   WiFi.begin(ssid, password);
   drawBlueScreen("Waiting Wi-fi Connection");
   while (WiFi.status() != WL_CONNECTED) {
@@ -63,28 +66,28 @@ void loop() {
   // ボタンに合わせて天気の表示日を変える
   bool need_redraw = false;
   M5.update();
-  if (M5.BtnA.read()) {
-    nowDisplay = kDisplayDate_Today;
-    need_redraw = true;
-    stop_co2_update = false;
-  }
-  if (M5.BtnB.read()) {
-    nowDisplay = kDisplayDate_Tomorrow;
-    need_redraw = true;
-    stop_co2_update = false;
-  }
-  if (M5.BtnC.read()) {
-    nowDisplay = kDisplayDate_DayAfterTomorrow;
-    need_redraw = true;
-    stop_co2_update = false;
-  }
-  if (M5.BtnA.pressedFor(1000)) {
-    // 気象庁の天気予報画像を表示
-    nowDisplay = kDisplayDate_Map;
-    DynamicJsonDocument pictureInfo = getJson(endpoint_weatherImg);
-    String url = "https://www.jma.go.jp/bosai/weather_map/data/png/" + pictureInfo["near"]["ft24"][0].as<String>();
-    load_png(url, 0.6);
-    stop_co2_update = true;
+
+  // タッチ処理
+  if (M5.Touch.getCount()) {
+    auto t = M5.Touch.getDetail();
+    if (t.wasPressed()) {
+      int16_t x = t.x;
+      int16_t y = t.y;
+
+      if (x < display.width() / 3) {  // 左エリア
+        nowDisplay = kDisplayDate_Today;
+        need_redraw = true;
+        stop_co2_update = false;
+      } else if (x < (display.width() * 2 / 3)) {  // 中央エリア
+        nowDisplay = kDisplayDate_Tomorrow;
+        need_redraw = true;
+        stop_co2_update = false;
+      } else {  // 右エリア
+        nowDisplay = kDisplayDate_DayAfterTomorrow;
+        need_redraw = true;
+        stop_co2_update = false;
+      }
+    }
   }
 
   // 開始直後または1時間に1度、天気情報を更新する
@@ -95,7 +98,7 @@ void loop() {
   }
 
   // 画面の再描画フラグが立っている場合、再描画する
-  if (need_redraw && nowDisplay < kDisplayDate_Map) {
+  if (need_redraw) {
     drawWeather(weatherInfo, (uint32_t)nowDisplay);
   }
 
@@ -107,7 +110,7 @@ void loop() {
 // 情報更新系関数
 // ----------------------------------------------------------
 // JSONデータを取得する
-DynamicJsonDocument getJson(const char *url) {
+DynamicJsonDocument getJson(const char* url) {
   DynamicJsonDocument jsonDoc(20000);
 
   if ((WiFi.status() == WL_CONNECTED)) {
@@ -132,7 +135,7 @@ DynamicJsonDocument getJson(const char *url) {
 void drawWeather(DynamicJsonDocument jsonDoc, uint32_t day_index) {
   if (jsonDoc == NULL) return;
 
-  M5.Lcd.clear();
+  display.clear();
   drawBackLine(day_index);                                 // 区切り線の描画
   drawDataDays(jsonDoc);                                   // データ取得日の描画
   String todayStr = drawSelectedDays(jsonDoc, day_index);  // 選択されたデータの日付の描画（3日予報の日付を使用）
@@ -140,9 +143,9 @@ void drawWeather(DynamicJsonDocument jsonDoc, uint32_t day_index) {
   drawRainPred(jsonDoc, todayStr);                         // 降水確率の描画（3日予報+7日予報）
   drawTemp(jsonDoc, todayStr);                             // 最低・最高気温の描画（3日予報（地区詳細）+7日予報）
 
-  M5.Lcd.setTextSize(2);
-  M5.Lcd.setTextColor(TFT_WHITE);
-  M5.Lcd.drawString("`C", 250, 135);
+  display.setTextSize(2);
+  display.setTextColor(TFT_WHITE);
+  display.drawString("`C", 250, 135);
 }
 // Areaの文字列が一致するIndexを求める
 uint8_t getAreaIndex(DynamicJsonDocument jsonDoc, uint32_t days, uint32_t time_index, String region) {
@@ -220,7 +223,7 @@ void drawRainPred(DynamicJsonDocument jsonDoc, String todayStr) {
       data_exist = true;
     }
   }
-  if(data_exist)return;
+  if (data_exist) return;
   rainfallData = jsonDoc[days7]["timeSeries"][0];  // 7日予報の降水確率
   for (int i = 0; i < rainfallData["timeDefines"].size(); i++) {
     if (rainfallData["timeDefines"][i].as<String>().indexOf(todayStr) != -1) {
@@ -245,7 +248,7 @@ void drawTemp(DynamicJsonDocument jsonDoc, String todayStr) {
       data_exist = true;
     }
   }
-  if(data_exist){
+  if (data_exist) {
     M5.Lcd.setTextColor(TFT_BLUE);
     M5.Lcd.drawString(String(days3_minTemperature), 10, 120);
     M5.Lcd.setTextColor(TFT_RED);
@@ -275,81 +278,8 @@ uint16_t getDrawColorFromRainPred(uint32_t val) {
 
 // 青画面の描画（各種情報表示用）
 void drawBlueScreen(String s) {
-  M5.Lcd.fillScreen(TFT_BLUE);
-  M5.Lcd.setTextColor(TFT_WHITE);
-  M5.Lcd.setTextSize(1);
-  M5.Lcd.drawString(s, 0, 10);
-}
-
-// ----------------------------------------------------------
-// png描画系関数
-// https://github.com/kikuchan/pngle
-// 標準のArduinoサンプルではなく、TFTサンプルの方を使うこと（無限待ちになる）
-// ----------------------------------------------------------
-double g_scale = 1.0;
-void pngle_on_draw(pngle_t *pngle, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t rgba[4]) {
-  uint16_t color = (rgba[0] << 8 & 0xf800) | (rgba[1] << 3 & 0x07e0) | (rgba[2] >> 3 & 0x001f);
-
-  if (rgba[3]) {
-    x = ceil(x * g_scale);
-    y = ceil(y * g_scale);
-    w = ceil(w * g_scale);
-    h = ceil(h * g_scale);
-    M5.Lcd.fillRect(x, y, w, h, color);
-  }
-}
-void load_png(String url, double scale) {
-  HTTPClient http;
-  http.begin(url);
-
-  int httpCode = http.GET();
-  if (httpCode != HTTP_CODE_OK) {
-    drawBlueScreen("HTTP Error");
-    http.end();
-    return;
-  }
-
-  int total = http.getSize();
-
-  WiFiClient *stream = http.getStreamPtr();
-
-  pngle_t *pngle = pngle_new();
-  pngle_set_draw_callback(pngle, pngle_on_draw);
-  g_scale = scale;
-
-  uint8_t buf[2048];
-  int remain = 0;
-  uint32_t timeout = millis();
-  while (http.connected() && (total > 0 || remain > 0)) {
-    // Break out of loop after 10s
-    if ((millis() - timeout) > 10000UL) {
-      drawBlueScreen("HTTP Timeout");
-      break;
-    }
-
-    size_t size = stream->available();
-    if (!size) {
-      delay(1);
-      continue;
-    }
-    if (size > sizeof(buf) - remain) {
-      size = sizeof(buf) - remain;
-    }
-
-    int len = stream->readBytes(buf + remain, size);
-    if (len > 0) {
-      int fed = pngle_feed(pngle, buf, remain + len);
-      if (fed < 0) {
-        drawBlueScreen("PNGLE Error");
-        break;
-      }
-      total -= len;
-      remain = remain + len - fed;
-      if (remain > 0) memmove(buf, buf + fed, remain);
-    } else {
-      delay(1);
-    }
-  }
-  pngle_destroy(pngle);
-  http.end();
+  display.fillScreen(TFT_BLUE);
+  display.setTextColor(TFT_WHITE);
+  display.setTextSize(1);
+  display.drawString(s, 0, 10);
 }
